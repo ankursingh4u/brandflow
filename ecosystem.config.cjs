@@ -1,8 +1,8 @@
 module.exports = {
   apps: [
     {
-      name: "mx-brand-logo",
-      cwd: "/var/www/mx-brand-logo/web",
+      name: "brandflow-src",
+      cwd: "/var/www/brandflow/web",
       script: "index.js",
       interpreter: "node",
       env: {

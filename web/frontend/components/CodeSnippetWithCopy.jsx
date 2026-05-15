@@ -8,7 +8,7 @@ const QuickSetupGuide = () => {
 
   const codeSnippets = {
     sectionName: `
-mx-brand-logo
+  BrandFlow
     `,
     headingIdea: `
 Trusted by ambitious retail brands

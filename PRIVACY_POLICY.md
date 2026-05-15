@@ -75,6 +75,6 @@ We may update this Privacy Policy from time to time to reflect operational, lega
 If you have questions about this Privacy Policy, you can contact us at:
 
 - App: LogoFlow Marquee
-- Website: https://mx-brand-logo.solnix.store
+-- Website: https://brandflow.solnix.store
 - Email: ankur4worksabai@gmail.com
 

@@ -12,8 +12,8 @@ sudo npm install -g pm2
 ### 2. Clone repo
 ```bash
 cd /var/www
-git clone https://github.com/ankur4work/-mx-brand-logo.git mx-brand-logo
-cd /var/www/mx-brand-logo
+git clone https://github.com/ankur4work/-mx-brand-logo.git brandflow
+cd /var/www/brandflow
 ```
 
 ### 3. Install packages and build frontend
@@ -29,8 +29,8 @@ cd ..
 
 ### 4. Add production env
 ```bash
-cp /var/www/mx-brand-logo/web/.env.example /var/www/mx-brand-logo/web/.env
-nano /var/www/mx-brand-logo/web/.env
+cp /var/www/brandflow/web/.env.example /var/www/brandflow/web/.env
+nano /var/www/brandflow/web/.env
 ```
 
 Required production values:
@@ -48,7 +48,7 @@ Required production values:
 
 ### 5. Start with pm2
 ```bash
-cd /var/www/mx-brand-logo
+cd /var/www/brandflow
 pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup
@@ -56,13 +56,13 @@ pm2 startup
 
 ### 6. Configure nginx
 ```bash
-sudo cp /var/www/mx-brand-logo/deploy/nginx-mx-brand-logo.conf /etc/nginx/sites-available/mx-brand-logo
-sudo nano /etc/nginx/sites-available/mx-brand-logo
+sudo cp /var/www/brandflow/deploy/nginx-brandflow.conf /etc/nginx/sites-available/brandflow
+sudo nano /etc/nginx/sites-available/brandflow
 ```
 
 Replace `app.example.com` with your real subdomain, then enable:
 ```bash
-sudo ln -s /etc/nginx/sites-available/mx-brand-logo /etc/nginx/sites-enabled/mx-brand-logo
+sudo ln -s /etc/nginx/sites-available/brandflow /etc/nginx/sites-enabled/brandflow
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -80,10 +80,10 @@ In Partner Dashboard set:
 
 ### 9. Future updates
 ```bash
-cd /var/www/mx-brand-logo
+cd /var/www/brandflow
 git pull
 cd web/frontend
 npm run build
 cd ..
-pm2 restart mx-brand-logo
+pm2 restart brandflow-src
 ```

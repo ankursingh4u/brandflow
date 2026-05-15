@@ -1,10 +1,10 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "04e6f1743b6ee8410507c0768d8282a6"
-name = "Brand Flow"
+name = "BrandFlow"
 application_url = "https://oa5j5bfjk9wyp3i167muzk0j.91.239.208.85.sslip.io"
 embedded = true
-handle = "mx-brand-logo-buxton"
+handle = "brandflow"
 
 [build]
 automatically_update_urls_on_dev = true
