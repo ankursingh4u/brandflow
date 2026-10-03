@@ -1,12 +1,15 @@
 import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
-import { LATEST_API_VERSION } from "@shopify/shopify-api";
 import { shopifyApp } from "@shopify/shopify-app-express";
 import { MemorySessionStorage } from "@shopify/shopify-app-session-storage-memory";
 import { MongoDBSessionStorage } from "@shopify/shopify-app-session-storage-mongodb";
-import { SQLiteSessionStorage } from "@shopify/shopify-app-session-storage-sqlite";
-import { restResources } from "@shopify/shopify-api/rest/admin/2023-04";
+import { restResources } from "@shopify/shopify-api/rest/admin/2026-07";
 import dotenv from "dotenv";
+
+// Pinned to match [webhooks] api_version in shopify.app.brandflow.toml. Previously this used
+// LATEST_API_VERSION with restResources for 2023-04, which logged a version-mismatch warning
+// on every boot. 2023-04 no longer ships in @shopify/shopify-api v15 (oldest is 2024-10).
+const API_VERSION = "2026-07";
 
 dotenv.config();
 
@@ -19,17 +22,37 @@ const sqliteSessionPath = resolve(
   process.env.SQLITE_SESSION_DB_PATH || ".shopify/session-storage.sqlite"
 );
 
-mkdirSync(dirname(sqliteSessionPath), { recursive: true });
+// sqlite is a dev-only fallback and is the one dependency that needs a native build. It is an
+// optionalDependency and is imported lazily so that a missing/unbuildable sqlite3 binding can
+// never break the production image, which always runs SESSION_STORAGE=mongodb.
+async function createSessionStorage() {
+  if (sessionStorageMode === "mongodb") {
+    return new MongoDBSessionStorage(
+      process.env.MONGODB_URI,
+      process.env.MONGODB_DB_NAME
+    );
+  }
 
-const sessionStorage =
-  sessionStorageMode === "mongodb"
-    ? new MongoDBSessionStorage(
-        process.env.MONGODB_URI,
-        process.env.MONGODB_DB_NAME
-      )
-    : sessionStorageMode === "memory"
-      ? new MemorySessionStorage()
-      : new SQLiteSessionStorage(sqliteSessionPath);
+  if (sessionStorageMode === "memory") {
+    return new MemorySessionStorage();
+  }
+
+  mkdirSync(dirname(sqliteSessionPath), { recursive: true });
+
+  try {
+    const { SQLiteSessionStorage } = await import(
+      "@shopify/shopify-app-session-storage-sqlite"
+    );
+    return new SQLiteSessionStorage(sqliteSessionPath);
+  } catch (error) {
+    console.warn(
+      `sqlite session storage unavailable (${error.message}); falling back to memory storage`
+    );
+    return new MemorySessionStorage();
+  }
+}
+
+const sessionStorage = await createSessionStorage();
 
 console.log(
   sessionStorageMode === "sqlite"
@@ -39,7 +62,7 @@ console.log(
 
 const shopify = shopifyApp({
   api: {
-    apiVersion: LATEST_API_VERSION,
+    apiVersion: API_VERSION,
     restResources,
     apiKey: process.env.SHOPIFY_API_KEY,
     apiSecretKey: process.env.SHOPIFY_API_SECRET,
@@ -52,6 +75,13 @@ const shopify = shopifyApp({
   },
   webhooks: {
     path: "/api/webhooks",
+  },
+  // Required since Shopify stopped accepting non-expiring offline tokens on the Admin API.
+  // Without this every Admin GraphQL call returns 403 "Non-expiring access tokens are no longer
+  // accepted for the Admin API". Enabling it makes the OAuth callback request an expiring token
+  // and lets the library refresh it automatically before expiry.
+  future: {
+    expiringOfflineAccessTokens: true,
   },
   sessionStorage,
 });

@@ -229,7 +229,8 @@ async function attachOfflineSession(req, res, next) {
   return next();
 }
 
-app.use("/api/*", attachOfflineSession);
+// Express 5 (path-to-regexp v8) rejects bare "*" wildcards; they must be named.
+app.use("/api/*splat", attachOfflineSession);
 
 async function getSessionForRequest(req, res) {
   const validatedSession = getSession(res);
@@ -772,7 +773,7 @@ const serveFrontend = async (_req, res) => {
     .send(html);
 };
 
-app.use("/*", serveFrontend);
+app.use("/*splat", serveFrontend);
 
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
