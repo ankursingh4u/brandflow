@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo } from "react";
 import {
   Badge,
+  Button,
   Card,
   Frame,
   Layout,
@@ -73,6 +74,19 @@ export default function HomePage() {
       : currentPlan === "locked"
         ? "Locked"
         : "Checking...";
+
+  // Theme app extensions are added from the theme editor, so give merchants a direct way there
+  // rather than only describing the path. Opens in the top frame because the admin editor cannot
+  // render inside the embedded app iframe.
+  const openThemeEditor = () => {
+    const storeHandle = getCurrentShop().replace(/\.myshopify\.com$/i, "");
+    if (!storeHandle) return;
+
+    open(
+      `https://admin.shopify.com/store/${storeHandle}/themes/current/editor?context=apps`,
+      "_top"
+    );
+  };
 
   const shellStyle = {
     background:
@@ -202,6 +216,15 @@ export default function HomePage() {
                     <li>Upload logos and fine-tune display settings</li>
                     <li>Save, preview, and publish</li>
                   </ol>
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <Button primary onClick={openThemeEditor}>
+                      Open theme editor
+                    </Button>
+                    <Button onClick={() => navigate(withShopQuery("/install"))}>
+                      Full setup guide
+                    </Button>
+                  </div>
                 </div>
 
                 <div

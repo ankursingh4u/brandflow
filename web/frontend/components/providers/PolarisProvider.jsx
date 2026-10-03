@@ -1,6 +1,8 @@
 import { useCallback } from "react";
 import { AppProvider } from "@shopify/polaris";
-import { useNavigate } from "@shopify/app-bridge-react";
+// App Bridge 4 no longer exports useNavigate; in-app navigation goes through React Router and
+// App Bridge keeps the admin URL in sync automatically.
+import { useNavigate } from "react-router-dom";
 import translations from "@shopify/polaris/locales/en.json";
 import "@shopify/polaris/build/esm/styles.css";
 

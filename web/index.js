@@ -510,9 +510,16 @@ const PlanService = {
   },
 };
 
+// Optional analytics sink. Previously this POSTed to an empty URL, which threw
+// ERR_INVALID_URL on every /api/store-details request and was swallowed, so nothing was ever
+// recorded. It is now a no-op unless ANALYTICS_ENDPOINT is configured.
+const ANALYTICS_ENDPOINT = process.env.ANALYTICS_ENDPOINT || "";
+
 async function storeShopDetails(shopDetails) {
+  if (!ANALYTICS_ENDPOINT) return;
+
   try {
-    await fetch("", {
+    await fetch(ANALYTICS_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(shopDetails),

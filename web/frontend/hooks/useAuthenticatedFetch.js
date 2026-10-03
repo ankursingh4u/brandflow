@@ -1,25 +1,21 @@
-import { authenticatedFetch } from "@shopify/app-bridge-utils";
-import { useAppBridge } from "@shopify/app-bridge-react";
 import { withShopQuery } from "../utils/shop";
 
 /**
  * A hook that returns an auth-aware fetch function.
- * @desc The returned fetch function that matches the browser's fetch API
- * See: https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API
- * It will provide the following functionality:
  *
- * 1. Add a `X-Shopify-Access-Token` header to the request.
- * 2. Check response for `X-Shopify-API-Request-Failure-Reauthorize` header.
- * 3. Redirect the user to the reauthorization URL if the header is present.
+ * With App Bridge 4 (loaded via the app-bridge.js script tag in index.html) the global `fetch`
+ * is already session-token aware for same-origin requests, so the legacy
+ * `authenticatedFetch(app)` helper from @shopify/app-bridge-utils is no longer needed.
+ *
+ * This wrapper still:
+ * 1. Checks the response for the `X-Shopify-API-Request-Failure-Reauthorize` header.
+ * 2. Redirects the merchant through OAuth again when that header is present.
  *
  * @returns {Function} fetch function
  */
 export function useAuthenticatedFetch() {
-  const app = useAppBridge();
-  const fetchFunction = authenticatedFetch(app);
-
   return async (uri, options) => {
-    const response = await fetchFunction(uri, options);
+    const response = await fetch(uri, options);
     checkHeadersForReauthorization(response.headers);
     return response;
   };
