@@ -139,6 +139,24 @@ function getOfflineSessionId(shop) {
 async function loadStoredSessionForShop(shop) {
   if (!shop) return null;
 
+  // Offline tokens expire now that expiringOfflineAccessTokens is enabled, so a stored token
+  // cannot be used as-is. ensureValidOfflineSession loads the session, refreshes the token when
+  // it is within 5 minutes of expiry, and persists the refreshed session. Reading straight from
+  // sessionStorage (below) skips that, which left the app using a stale token until every Admin
+  // API call failed with 401 Unauthorized.
+  if (typeof shopify.ensureValidOfflineSession === "function") {
+    try {
+      const validSession = await shopify.ensureValidOfflineSession(shop);
+      if (validSession) return validSession;
+    } catch (error) {
+      // Refresh failed (for example the refresh token itself expired). Fall through so the
+      // caller sends the merchant back through OAuth instead of returning a 500.
+      console.warn(
+        `Could not refresh offline session for ${shop}: ${error.message}`
+      );
+    }
+  }
+
   const offlineSessionId = getOfflineSessionId(shop);
   if (offlineSessionId && shopify.config.sessionStorage.loadSession) {
     const offlineSession = await shopify.config.sessionStorage.loadSession(
@@ -464,6 +482,10 @@ async function requireActivePlan(req, res, next) {
 
     return res.redirect(confirmationUrl);
   } catch (error) {
+    if (isShopifyUnauthorizedError(error)) {
+      return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
+    }
+
     return handleError(
       res,
       HTTP_STATUS.INTERNAL_SERVER_ERROR,
@@ -742,6 +764,10 @@ app.get("/api/store-details", async (req, res) => {
       data: shop,
     });
   } catch (error) {
+    if (isShopifyUnauthorizedError(error)) {
+      return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
+    }
+
     handleError(
       res,
       HTTP_STATUS.INTERNAL_SERVER_ERROR,
@@ -763,6 +789,10 @@ app.get("/api/getshop", async (req, res) => {
 
     res.json({ shop: session.shop });
   } catch (error) {
+    if (isShopifyUnauthorizedError(error)) {
+      return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
+    }
+
     handleError(
       res,
       HTTP_STATUS.INTERNAL_SERVER_ERROR,
