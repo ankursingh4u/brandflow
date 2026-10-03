@@ -773,7 +773,9 @@ const serveFrontend = async (_req, res) => {
     .send(html);
 };
 
-app.use("/*splat", serveFrontend);
+// Braces matter: in Express 5 "/*splat" matches every path EXCEPT the root, so "/" would 404.
+// "/{*splat}" makes the wildcard optional and matches "/" too.
+app.use("/{*splat}", serveFrontend);
 
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
