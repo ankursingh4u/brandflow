@@ -374,6 +374,19 @@ function isEmbeddedRequest(req) {
 
 const BillingManager = {
   async getSubscriptionStatus(session) {
+    // When the plan gate is switched off, report an entitled plan everywhere instead of only
+    // skipping the server-side middleware. The frontend gates independently of requireActivePlan
+    // (pages/index.jsx redirects to /billing-required on hasActiveSubscription === false, which
+    // then sends the merchant to the hosted plan page), so reporting "false" here would still
+    // bounce merchants out of the app even with the gate disabled.
+    if (!SHOPIFY_REQUIRE_ACTIVE_PLAN) {
+      return {
+        tier: "premium",
+        activePlanName: PRO_PLAN_NAME,
+        hasActiveSubscription: true,
+      };
+    }
+
     const client = createGraphQLClient(session);
     const response = await client.request(GET_ACTIVE_SUBSCRIPTIONS);
     const subscriptions =
