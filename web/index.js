@@ -852,7 +852,25 @@ const serveFrontend = async (_req, res) => {
 // the auth flow instead of being served the app shell. Without it the SPA rendered for anyone, so
 // a merchant could interact with the UI before installing. Static assets are unaffected because
 // serveStatic above handles them first.
-app.use("/{*splat}", shopify.ensureInstalledOnShop(), serveFrontend);
+const ensureInstalled = shopify.ensureInstalledOnShop();
+
+// ...with one exemption. The exit-iframe page is a transitional bounce page whose whole job is to
+// move the TOP frame to `redirectUri`. It is reached by a server redirect that carries no
+// `embedded=1`, so ensureInstalledOnShop reads it as a non-embedded load and redirects to the
+// admin app URL — silently dropping redirectUri and bouncing the merchant back INTO the app.
+// That turned "Choose a plan" into a loop. Uses originalUrl because app.use() rewrites req.url.
+app.use(
+  "/{*splat}",
+  (req, res, next) => {
+    const pathname = String(req.originalUrl || "").split("?")[0];
+    if (pathname === shopify.config.exitIframePath) {
+      return next();
+    }
+
+    return ensureInstalled(req, res, next);
+  },
+  serveFrontend
+);
 
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
