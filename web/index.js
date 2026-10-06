@@ -22,17 +22,6 @@ const APP_NAME = "BrandFlow";
 const PRO_PLAN_NAME = "Pro";
 const BILLING_MODE = "managed";
 const SHOPIFY_APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || "";
-// The App Store listing slug (apps.shopify.com/<slug>) is not necessarily the app handle from
-// shopify.app.*.toml, and the two URLs below are keyed on different ones:
-//
-//   /charges/<listing-slug>/pricing_plans   <- managed pricing page
-//   /apps/<app-handle>                      <- embedded app in admin
-//
-// For this app they differ: the listing is "brand-flow" while the app handle is
-// "brandflow-vision", so pricing URLs built from SHOPIFY_APP_HANDLE 404'd. Falls back to the app
-// handle for apps where the two happen to be the same string.
-const SHOPIFY_APP_PRICING_HANDLE =
-  process.env.SHOPIFY_APP_PRICING_HANDLE || SHOPIFY_APP_HANDLE;
 const SHOPIFY_REQUIRE_ACTIVE_PLAN =
   process.env.SHOPIFY_REQUIRE_ACTIVE_PLAN !== "false";
 
@@ -358,10 +347,8 @@ function getStoreHandle(shop) {
 }
 
 function getManagedPricingUrl(shop) {
-  if (!SHOPIFY_APP_PRICING_HANDLE) {
-    throw new Error(
-      "Missing SHOPIFY_APP_PRICING_HANDLE (and no SHOPIFY_APP_HANDLE to fall back to)"
-    );
+  if (!SHOPIFY_APP_HANDLE) {
+    throw new Error("Missing SHOPIFY_APP_HANDLE");
   }
   if (!shop) {
     throw new Error("Missing shop");
@@ -372,7 +359,7 @@ function getManagedPricingUrl(shop) {
     throw new Error("Missing store handle");
   }
 
-  return `https://admin.shopify.com/store/${storeHandle}/charges/${SHOPIFY_APP_PRICING_HANDLE}/pricing_plans`;
+  return `https://admin.shopify.com/store/${storeHandle}/charges/${SHOPIFY_APP_HANDLE}/pricing_plans`;
 }
 
 function getEmbeddedAppAdminUrl(req, shop) {
@@ -583,9 +570,6 @@ app.get("/api/billing-required", async (req, res) => {
       shop: session.shop,
       storeHandle: getStoreHandle(session.shop),
       appHandle: SHOPIFY_APP_HANDLE,
-      // Surfaced separately because a mismatch between these two is exactly what makes the
-      // managed pricing page 404, and it is otherwise invisible from outside.
-      pricingHandle: SHOPIFY_APP_PRICING_HANDLE,
       pricingUrl: getManagedPricingUrl(session.shop),
     });
   } catch (error) {
