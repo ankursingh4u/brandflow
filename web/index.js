@@ -197,29 +197,40 @@ function getShopFromReferrer(req) {
   return shopify.api.utils.sanitizeShop(`${storeHandle}.myshopify.com`) || "";
 }
 
-async function getShopFromRequest(req) {
-  const queryShop = shopify.api.utils.sanitizeShop(
-    String(req.query.shop || req.headers["x-shopify-shop-domain"] || "")
-  );
+/**
+ * Resolve the shop for an authenticated API request from a VERIFIED Shopify session token.
+ *
+ * This used to read `?shop=` first and only fall back to the bearer token. That meant anyone who
+ * knew a store's myshopify domain could call /api/* and read that merchant's data with no
+ * credentials at all — the shop was simply asserted by the caller, never proven.
+ *
+ * decodeSessionToken verifies the JWT's HMAC signature against SHOPIFY_API_SECRET and checks its
+ * exp/nbf/aud claims, so the `dest` claim can be trusted as the caller's identity. A token is the
+ * only accepted proof; `?shop=` is never consulted here.
+ *
+ * App Bridge attaches the token as `Authorization: Bearer <jwt>`. Shopify also appends the same
+ * signed JWT as an `id_token` query param on embedded app loads, so that is accepted too and gets
+ * identical verification.
+ */
+async function getVerifiedShop(req) {
+  const sessionToken =
+    req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1] ||
+    (typeof req.query.id_token === "string" ? req.query.id_token : "");
 
-  if (queryShop) {
-    return queryShop;
-  }
-
-  const bearerToken = req.headers.authorization?.match(/Bearer (.*)/)?.[1];
-  if (!bearerToken) {
-    return getShopFromReferrer(req);
+  if (!sessionToken) {
+    return "";
   }
 
   try {
-    const payload = await shopify.api.session.decodeSessionToken(bearerToken);
+    const payload = await shopify.api.session.decodeSessionToken(sessionToken);
     return (
       shopify.api.utils.sanitizeShop(
         String(payload.dest || "").replace(/^https:\/\//i, "")
       ) || ""
     );
-  } catch (_error) {
-    return getShopFromReferrer(req);
+  } catch (error) {
+    console.warn(`Rejected an invalid session token: ${error.message}`);
+    return "";
   }
 }
 
@@ -229,8 +240,11 @@ async function attachOfflineSession(req, res, next) {
     return next();
   }
 
-  const shop = await getShopFromRequest(req);
+  const shop = await getVerifiedShop(req);
   if (!shop) {
+    // No verified token, so this is not an authenticated embedded request. Deliberately does NOT
+    // fall back to `?shop=` — that fallback was the vulnerability. getShopFromSessionOrRequest is
+    // still used below, but only to build the OAuth redirect URL, which discloses nothing.
     return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
   }
 
@@ -256,16 +270,24 @@ async function getSessionForRequest(req, res) {
     return validatedSession;
   }
 
+  // Every /api/* route is behind attachOfflineSession, which only populates res.locals after
+  // verifying a session token. Reaching this point on an /api/* path therefore means the token was
+  // missing or invalid, so refuse rather than falling through to the unverified lookup below.
+  // Uses originalUrl because app.use(path, fn) strips the mount prefix from req.path/req.url.
+  if (String(req.originalUrl || "").startsWith("/api/")) {
+    return null;
+  }
+
+  // Document routes (/billing/start, /welcome) are top-level navigations that cannot carry an
+  // Authorization header. They return no merchant data — they only build a redirect URL from the
+  // shop — so resolving it from the request is acceptable here.
   const shop =
-    validatedSession?.shop ||
     req.query.shop ||
     req.headers["x-shopify-shop-domain"] ||
     getShopFromReferrer(req);
 
   const offlineSession = await loadStoredSessionForShop(String(shop || ""));
-  if (offlineSession) return offlineSession;
-
-  return validatedSession || null;
+  return offlineSession || null;
 }
 
 function createGraphQLClient(session) {
