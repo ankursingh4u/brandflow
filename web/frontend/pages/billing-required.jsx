@@ -13,11 +13,14 @@ export default function BillingRequired() {
   const {
     data: subscriptionData,
     isLoading,
-    isFetching,
   } = useAppQuery({
     url: withShopQuery("/api/hasActiveSubscription"),
     reactQueryOptions: {
-      refetchInterval: 2000,
+      // This endpoint is not cheap: every call is a GraphQL round-trip to Shopify plus a
+      // possible offline-token refresh. The poll only exists to unlock the dashboard once the
+      // merchant approves a plan in Shopify admin, so seconds of latency there cost nothing —
+      // whereas the old 2s interval could issue a new request before the previous one returned.
+      refetchInterval: 15000,
       staleTime: 0,
     },
   });
@@ -37,8 +40,11 @@ export default function BillingRequired() {
     }
   }
 
+  // Gating on isFetching too made this bail on every background poll and re-run twice per poll.
+  // isLoading alone is the right signal: in react-query v3 it is true only while there is no
+  // data yet, which is exactly when subscriptionData can't be trusted.
   useEffect(() => {
-    if (isLoading || isFetching) return;
+    if (isLoading) return;
     if (subscriptionData?.hasActiveSubscription === true) {
       navigate("/", { replace: true });
       return;
@@ -51,11 +57,12 @@ export default function BillingRequired() {
     if (hasAttemptedRedirect.current) return;
     hasAttemptedRedirect.current = true;
     openPricing(true);
-  }, [isFetching, isLoading, navigate, subscriptionData]);
+  }, [isLoading, navigate, subscriptionData]);
 
   return (
     <Frame>
-      {(redirecting || isLoading || isFetching) && <Loading />}
+      {/* Tying this to isFetching made the loading bar flash on every poll, forever. */}
+      {(redirecting || isLoading) && <Loading />}
       <Page
         title="Plan required"
         subtitle="A Shopify managed Pro plan is required before merchants can use the app dashboard."
