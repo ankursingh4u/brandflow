@@ -88,6 +88,12 @@ export default function HomePage() {
     );
   };
 
+  // Managed pricing hosts plan upgrades, downgrades and cancellation on Shopify's side, so send
+  // merchants there through /billing/start, which already handles breaking out of the iframe.
+  const openPlanSettings = () => {
+    window.location.assign(withShopQuery("/billing/start"));
+  };
+
   const shellStyle = {
     background:
       "radial-gradient(circle at top left, rgba(15,118,110,0.12), transparent 35%), linear-gradient(180deg, #FCFFFE 0%, #F2F7F6 100%)",
@@ -167,6 +173,15 @@ export default function HomePage() {
                     }}
                   >
                     {isLoading || isFetching ? "Checking..." : currentPlanLabel}
+                  </div>
+
+                  {/* Merchants must be able to change or cancel their plan without reinstalling
+                      or contacting support. Shopify's hosted plan page handles both, so link
+                      straight to it rather than leaving the only route through support. */}
+                  <div style={{ marginTop: 12 }}>
+                    <Button plain monochrome onClick={openPlanSettings}>
+                      Manage plan
+                    </Button>
                   </div>
                 </div>
               </div>

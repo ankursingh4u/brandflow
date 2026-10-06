@@ -847,7 +847,12 @@ const serveFrontend = async (_req, res) => {
 
 // Braces matter: in Express 5 "/*splat" matches every path EXCEPT the root, so "/" would 404.
 // "/{*splat}" makes the wildcard optional and matches "/" too.
-app.use("/{*splat}", serveFrontend);
+//
+// ensureInstalledOnShop gates the UI behind OAuth: a shop with no stored session is sent through
+// the auth flow instead of being served the app shell. Without it the SPA rendered for anyone, so
+// a merchant could interact with the UI before installing. Static assets are unaffected because
+// serveStatic above handles them first.
+app.use("/{*splat}", shopify.ensureInstalledOnShop(), serveFrontend);
 
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)

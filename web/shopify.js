@@ -3,13 +3,17 @@ import { dirname, resolve } from "path";
 import { shopifyApp } from "@shopify/shopify-app-express";
 import { MemorySessionStorage } from "@shopify/shopify-app-session-storage-memory";
 import { MongoDBSessionStorage } from "@shopify/shopify-app-session-storage-mongodb";
-import { restResources } from "@shopify/shopify-api/rest/admin/2026-07";
 import dotenv from "dotenv";
 
 // Pinned to match [webhooks] api_version in shopify.app.brandflow.toml. Previously this used
 // LATEST_API_VERSION with restResources for 2023-04, which logged a version-mismatch warning
 // on every boot. 2023-04 no longer ships in @shopify/shopify-api v15 (oldest is 2024-10).
 const API_VERSION = "2026-07";
+
+// restResources is deliberately NOT configured. Every Admin API call in this app goes through
+// shopify.api.clients.Graphql; nothing used the REST resources, but having them registered made
+// the app look like a REST consumer. New public apps must be built exclusively on the GraphQL
+// Admin API (the REST Admin API has been legacy since 1 Oct 2024), so the dead config is gone.
 
 dotenv.config();
 
@@ -63,7 +67,6 @@ console.log(
 const shopify = shopifyApp({
   api: {
     apiVersion: API_VERSION,
-    restResources,
     apiKey: process.env.SHOPIFY_API_KEY,
     apiSecretKey: process.env.SHOPIFY_API_SECRET,
     hostName: process.env.HOST.replace(/https?:\/\//, ""),

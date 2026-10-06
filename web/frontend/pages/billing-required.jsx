@@ -1,19 +1,14 @@
 // @ts-check
-import React, { useEffect, useRef, useState } from "react";
-import { Banner, Button, Card, Frame, Layout, Loading, Page } from "@shopify/polaris";
+import React, { useEffect, useState } from "react";
+import { Button, Card, Frame, Layout, Loading, Page } from "@shopify/polaris";
 import { useNavigate } from "react-router-dom";
 import { useAppQuery } from "../hooks";
 import { withShopQuery } from "../utils/shop";
 
 export default function BillingRequired() {
   const navigate = useNavigate();
-  const hasAttemptedRedirect = useRef(false);
   const [redirecting, setRedirecting] = useState(false);
-  const [banner, setBanner] = useState({ msg: "", status: null });
-  const {
-    data: subscriptionData,
-    isLoading,
-  } = useAppQuery({
+  const { data: subscriptionData, isLoading } = useAppQuery({
     url: withShopQuery("/api/hasActiveSubscription"),
     reactQueryOptions: {
       // This endpoint is not cheap: every call is a GraphQL round-trip to Shopify plus a
@@ -25,38 +20,21 @@ export default function BillingRequired() {
     },
   });
 
-  function openPricing(auto = false) {
-    try {
-      setRedirecting(true);
-      window.location.assign(withShopQuery("/billing/start"));
-    } catch (_error) {
-      setRedirecting(false);
-      if (auto) {
-        setBanner({
-          msg: "Unable to open Shopify pricing automatically. Use the button below.",
-          status: "warning",
-        });
-      }
-    }
+  function openPricing() {
+    setRedirecting(true);
+    window.location.assign(withShopQuery("/billing/start"));
   }
 
-  // Gating on isFetching too made this bail on every background poll and re-run twice per poll.
-  // isLoading alone is the right signal: in react-query v3 it is true only while there is no
-  // data yet, which is exactly when subscriptionData can't be trusted.
+  // Only the "active plan" case navigates automatically. This page used to also auto-redirect
+  // merchants to Shopify's plan page on load, which made declining a charge inescapable: decline
+  // → land back here → bounced straight out again, with no way to stay in the app. Requiring a
+  // click fixes that, and the click doubles as the user gesture a cross-origin iframe needs to
+  // navigate the top frame.
   useEffect(() => {
     if (isLoading) return;
     if (subscriptionData?.hasActiveSubscription === true) {
       navigate("/", { replace: true });
-      return;
     }
-
-    if (subscriptionData?.hasActiveSubscription !== false) {
-      return;
-    }
-
-    if (hasAttemptedRedirect.current) return;
-    hasAttemptedRedirect.current = true;
-    openPricing(true);
   }, [isLoading, navigate, subscriptionData]);
 
   return (
@@ -67,19 +45,19 @@ export default function BillingRequired() {
         title="Plan required"
         subtitle="A Shopify managed Pro plan is required before merchants can use the app dashboard."
       >
-        {!!banner.msg && <Banner status={banner.status}>{banner.msg}</Banner>}
-
         <Layout>
           <Layout.Section>
             <Card sectioned>
               <p style={{ marginTop: 0, color: "#475569", lineHeight: 1.7 }}>
-                Shopify handles the plan selection and payment approval for this
-                app. After the Pro subscription is approved, dashboard access
-                unlocks automatically.
+                Shopify handles plan selection and payment approval for this app.
+                Choose a plan to unlock the dashboard — access is granted
+                automatically once the subscription is approved. If you decline,
+                you will come back to this page and can try again whenever you
+                are ready.
               </p>
 
-              <Button primary loading={redirecting} onClick={() => openPricing(false)}>
-                Open Shopify pricing
+              <Button primary loading={redirecting} onClick={openPricing}>
+                Choose a plan
               </Button>
             </Card>
           </Layout.Section>
