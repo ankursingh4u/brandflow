@@ -364,11 +364,63 @@ function sendReauthorize(res, shop) {
     });
 }
 
+const STORE_HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]*$/i;
+
+/**
+ * Derive the admin store handle from the myshopify domain.
+ *
+ * This is a GUESS. `<handle>.myshopify.com` and `admin.shopify.com/store/<handle>` are separate
+ * identifiers and they are not guaranteed to agree. Only use this as a last resort — prefer
+ * getStoreHandleFromHost(), which reads the handle Shopify itself gave us.
+ */
 function getStoreHandle(shop) {
   return String(shop || "").replace(/\.myshopify\.com$/i, "");
 }
 
-function getManagedPricingUrl(shop) {
+/**
+ * Read the admin store handle out of the `host` query param.
+ *
+ * Shopify passes `host` to every embedded app load; it is base64 of either
+ * `admin.shopify.com/store/<handle>` (current) or `<handle>.myshopify.com/admin` (legacy).
+ * This is authoritative — it is the handle the admin is actually serving the merchant from —
+ * so any URL we build under admin.shopify.com should be based on it rather than on a guess.
+ */
+function getStoreHandleFromHost(req) {
+  const hostParam = String(req?.query?.host || "");
+  if (!hostParam) {
+    return "";
+  }
+
+  let decoded = "";
+  try {
+    // `host` is sometimes base64url-encoded and sometimes unpadded; normalise both.
+    decoded = Buffer.from(
+      hostParam.replace(/-/g, "+").replace(/_/g, "/"),
+      "base64"
+    ).toString("utf8");
+  } catch (_error) {
+    return "";
+  }
+
+  const adminMatch = decoded.match(/\/store\/([^/?#]+)/i);
+  const candidate =
+    adminMatch?.[1] || decoded.match(/^([^./?#]+)\.myshopify\.com/i)?.[1] || "";
+
+  return STORE_HANDLE_PATTERN.test(candidate) ? candidate : "";
+}
+
+/**
+ * Resolve the admin store handle, most trustworthy source first.
+ */
+function resolveStoreHandle(req, shop) {
+  return (
+    getStoreHandleFromHost(req) ||
+    getStoreHandleFromReferrer(req) ||
+    getStoreHandle(shop)
+  );
+}
+
+function getManagedPricingUrl(req, shop) {
   if (!SHOPIFY_APP_HANDLE) {
     throw new Error("Missing SHOPIFY_APP_HANDLE");
   }
@@ -376,16 +428,26 @@ function getManagedPricingUrl(shop) {
     throw new Error("Missing shop");
   }
 
-  const storeHandle = getStoreHandle(shop);
+  const storeHandle = resolveStoreHandle(req, shop);
   if (!storeHandle) {
     throw new Error("Missing store handle");
+  }
+
+  // The myshopify-derived guess was the only source before; log whenever it disagrees with the
+  // handle Shopify gave us, so a bad plan-page URL is diagnosable from the logs alone.
+  const guessedHandle = getStoreHandle(shop);
+  if (guessedHandle && guessedHandle !== storeHandle) {
+    console.log(
+      "[store-handle] resolved handle differs from myshopify domain",
+      JSON.stringify({ shop, guessedHandle, storeHandle })
+    );
   }
 
   return `https://admin.shopify.com/store/${storeHandle}/charges/${SHOPIFY_APP_HANDLE}/pricing_plans`;
 }
 
 function getEmbeddedAppAdminUrl(req, shop) {
-  const storeHandle = getStoreHandle(shop) || getStoreHandleFromReferrer(req);
+  const storeHandle = resolveStoreHandle(req, shop);
   if (!storeHandle || !SHOPIFY_APP_HANDLE) {
     return "";
   }
@@ -482,7 +544,7 @@ async function requireActivePlan(req, res, next) {
       return next();
     }
 
-    const confirmationUrl = getManagedPricingUrl(session.shop);
+    const confirmationUrl = getManagedPricingUrl(req, session.shop);
 
     if (req.path.startsWith("/api/")) {
       return res.status(HTTP_STATUS.PAYMENT_REQUIRED).send({
@@ -590,9 +652,9 @@ app.get("/api/billing-required", async (req, res) => {
       billingRequired: true,
       billingMode: BILLING_MODE,
       shop: session.shop,
-      storeHandle: getStoreHandle(session.shop),
+      storeHandle: resolveStoreHandle(req, session.shop),
       appHandle: SHOPIFY_APP_HANDLE,
-      pricingUrl: getManagedPricingUrl(session.shop),
+      pricingUrl: getManagedPricingUrl(req, session.shop),
     });
   } catch (error) {
     if (isShopifyUnauthorizedError(error)) {
@@ -614,7 +676,7 @@ app.get("/billing/start", async (req, res) => {
       return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
     }
 
-    const redirectUri = getManagedPricingUrl(session.shop);
+    const redirectUri = getManagedPricingUrl(req, session.shop);
 
     if (isEmbeddedRequest(req)) {
       return res.redirect(
@@ -667,7 +729,7 @@ app.get("/api/createSubscription", async (req, res) => {
     }
 
     res.status(HTTP_STATUS.OK).send({
-      confirmationUrl: getManagedPricingUrl(session.shop),
+      confirmationUrl: getManagedPricingUrl(req, session.shop),
       billingMode: BILLING_MODE,
       activePlanName: PRO_PLAN_NAME,
     });
