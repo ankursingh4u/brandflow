@@ -20,9 +20,11 @@ export default function BillingRequired() {
     },
   });
 
-  function openPricing() {
+  function openPricing(interval) {
     setRedirecting(true);
-    window.location.assign(withShopQuery("/billing/start"));
+    const path =
+      interval === "annual" ? "/billing/start?interval=annual" : "/billing/start";
+    window.location.assign(withShopQuery(path));
   }
 
   // Only the "active plan" case navigates automatically. This page used to also auto-redirect
@@ -43,22 +45,34 @@ export default function BillingRequired() {
       {(redirecting || isLoading) && <Loading />}
       <Page
         title="Plan required"
-        subtitle="A Shopify managed Pro plan is required before merchants can use the app dashboard."
+        subtitle="A Pro plan is required before you can use the app dashboard."
       >
         <Layout>
           <Layout.Section>
             <Card sectioned>
               <p style={{ marginTop: 0, color: "#475569", lineHeight: 1.7 }}>
-                Shopify handles plan selection and payment approval for this app.
-                Choose a plan to unlock the dashboard — access is granted
-                automatically once the subscription is approved. If you decline,
-                you will come back to this page and can try again whenever you
-                are ready.
+                The Pro plan unlocks the dashboard. Payment is approved through
+                Shopify and billed to your existing Shopify invoice — access is
+                granted automatically once you approve the charge. If you
+                decline, you will come back to this page and can try again
+                whenever you are ready.
               </p>
 
-              <Button primary loading={redirecting} onClick={openPricing}>
-                Choose a plan
-              </Button>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <Button
+                  primary
+                  loading={redirecting}
+                  onClick={() => openPricing("monthly")}
+                >
+                  Subscribe — $30/month
+                </Button>
+                <Button
+                  loading={redirecting}
+                  onClick={() => openPricing("annual")}
+                >
+                  Subscribe — $300/year (save 17%)
+                </Button>
+              </div>
             </Card>
           </Layout.Section>
         </Layout>

@@ -25,6 +25,23 @@ const SHOPIFY_APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || "";
 const SHOPIFY_REQUIRE_ACTIVE_PLAN =
   process.env.SHOPIFY_REQUIRE_ACTIVE_PLAN !== "false";
 
+// How merchants get charged.
+//   "auto"    - create the charge ourselves via the Billing API; if Shopify rejects the mutation,
+//               fall back to the hosted Shopify App Pricing plan page. Default.
+//   "api"     - Billing API only; surface the error instead of falling back.
+//   "managed" - hosted plan page only (the behaviour before this flag existed).
+//
+// "auto" exists because the hosted plan page 404s for real merchants on this app while working on
+// the development store, which blocks every paying install. A Billing API charge builds its own
+// confirmation URL per charge and does not depend on that page resolving.
+const BILLING_STRATEGY = (process.env.BILLING_STRATEGY || "auto").toLowerCase();
+const BILLING_CURRENCY = process.env.BILLING_CURRENCY || "USD";
+// Must match the public listing: Pro is $30/month or $300/year.
+const PRO_MONTHLY_PRICE = Number(process.env.PRO_MONTHLY_PRICE || 30);
+const PRO_ANNUAL_PRICE = Number(process.env.PRO_ANNUAL_PRICE || 300);
+// Shopify forces test charges on development stores regardless; this only matters elsewhere.
+const BILLING_TEST_CHARGES = process.env.BILLING_TEST_CHARGES === "true";
+
 const HTTP_STATUS = {
   OK: 200,
   BAD_REQUEST: 400,
@@ -524,7 +541,101 @@ const BillingManager = {
       hasActiveSubscription: Boolean(activeSubscription),
     };
   },
+
+  /**
+   * Create a recurring charge with the Billing API and return Shopify's confirmation URL.
+   *
+   * Returns "" (rather than throwing) when Shopify refuses to create the charge, so callers can
+   * fall back to the hosted plan page. Shopify's guidance is that apps on Shopify App Pricing
+   * shouldn't call appSubscriptionCreate; Manual Pricing is still supported for published apps,
+   * but if the platform rejects it we want the merchant to land somewhere rather than see a 500.
+   */
+  async createSubscription(req, session, interval) {
+    const isAnnual = interval === "ANNUAL";
+    const price = isAnnual ? PRO_ANNUAL_PRICE : PRO_MONTHLY_PRICE;
+    const returnUrl =
+      getEmbeddedAppAdminUrl(req, session.shop) ||
+      `${process.env.HOST}/?shop=${encodeURIComponent(session.shop)}`;
+
+    const client = createGraphQLClient(session);
+    const response = await client.request(CREATE_APP_SUBSCRIPTION, {
+      variables: {
+        name: `${PRO_PLAN_NAME} ${isAnnual ? "Annual" : "Monthly"}`,
+        returnUrl,
+        test: BILLING_TEST_CHARGES,
+        lineItems: [
+          {
+            plan: {
+              appRecurringPricingDetails: {
+                price: { amount: price, currencyCode: BILLING_CURRENCY },
+                interval: isAnnual ? "ANNUAL" : "EVERY_30_DAYS",
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const result =
+      response?.appSubscriptionCreate ||
+      response?.data?.appSubscriptionCreate ||
+      {};
+    const userErrors = result.userErrors || [];
+
+    console.log(
+      "[billing-create]",
+      JSON.stringify({
+        shop: session.shop,
+        interval: isAnnual ? "ANNUAL" : "EVERY_30_DAYS",
+        price,
+        currency: BILLING_CURRENCY,
+        test: BILLING_TEST_CHARGES,
+        subscriptionId: result.appSubscription?.id || null,
+        confirmationUrl: result.confirmationUrl || null,
+        userErrors,
+      })
+    );
+
+    return String(result.confirmationUrl || "");
+  },
 };
+
+/**
+ * Work out where to send a merchant who needs to pay, honouring BILLING_STRATEGY.
+ */
+async function resolveCheckoutUrl(req, session, interval) {
+  if (BILLING_STRATEGY !== "managed") {
+    try {
+      const confirmationUrl = await BillingManager.createSubscription(
+        req,
+        session,
+        interval
+      );
+      if (confirmationUrl) {
+        return confirmationUrl;
+      }
+      if (BILLING_STRATEGY === "api") {
+        throw new Error("appSubscriptionCreate returned no confirmationUrl");
+      }
+    } catch (error) {
+      if (BILLING_STRATEGY === "api" || isShopifyUnauthorizedError(error)) {
+        throw error;
+      }
+      console.log(
+        "[billing-create] falling back to the hosted plan page:",
+        formatErrorMessage(error)
+      );
+    }
+  }
+
+  return getManagedPricingUrl(req, session.shop);
+}
+
+function getRequestedInterval(req) {
+  return String(req.query.interval || "").toLowerCase() === "annual"
+    ? "ANNUAL"
+    : "EVERY_30_DAYS";
+}
 
 async function requireActivePlan(req, res, next) {
   if (!SHOPIFY_REQUIRE_ACTIVE_PLAN) {
@@ -544,27 +655,24 @@ async function requireActivePlan(req, res, next) {
       return next();
     }
 
-    const confirmationUrl = getManagedPricingUrl(req, session.shop);
+    const billingRequiredPath = buildBillingRequiredPath(req);
 
     if (req.path.startsWith("/api/")) {
       return res.status(HTTP_STATUS.PAYMENT_REQUIRED).send({
         billingRequired: true,
         billingMode: BILLING_MODE,
-        confirmationUrl,
-        billingRequiredPath: buildBillingRequiredPath(req),
+        billingRequiredPath,
+        // Where to send the merchant to actually pay. Deliberately our own route, not a Shopify
+        // URL: /billing/start creates the charge on demand. Building a charge here instead would
+        // mean a new pending subscription on every gated page load.
+        checkoutPath: "/billing/start",
       });
     }
 
-    if (req.query.embedded === "1" || req.query.host) {
-      return shopify.redirectOutOfApp({
-        req,
-        res,
-        redirectUri: confirmationUrl,
-        shop: session.shop,
-      });
-    }
-
-    return res.redirect(confirmationUrl);
+    // Keep the merchant inside the app and let /billing-required ask for an explicit click.
+    // This used to redirect straight out to the hosted plan page, which is exactly the page that
+    // 404s for real merchants — so a gated document load dead-ended instead of offering a retry.
+    return res.redirect(billingRequiredPath);
   } catch (error) {
     if (isShopifyUnauthorizedError(error)) {
       return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
@@ -676,7 +784,14 @@ app.get("/billing/start", async (req, res) => {
       return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
     }
 
-    const redirectUri = getManagedPricingUrl(req, session.shop);
+    // The home page's "Manage plan" button also lands here, and a merchant can double-click or
+    // refresh. Creating a charge unconditionally would prompt an already-paying merchant to pay a
+    // second time, so an active subscription goes to Shopify's hosted plan page (upgrade,
+    // downgrade, cancel) and never through appSubscriptionCreate.
+    const existing = await BillingManager.getSubscriptionStatus(session);
+    const redirectUri = existing.hasActiveSubscription
+      ? getManagedPricingUrl(req, session.shop)
+      : await resolveCheckoutUrl(req, session, getRequestedInterval(req));
 
     if (isEmbeddedRequest(req)) {
       return res.redirect(
@@ -729,7 +844,11 @@ app.get("/api/createSubscription", async (req, res) => {
     }
 
     res.status(HTTP_STATUS.OK).send({
-      confirmationUrl: getManagedPricingUrl(req, session.shop),
+      confirmationUrl: await resolveCheckoutUrl(
+        req,
+        session,
+        getRequestedInterval(req)
+      ),
       billingMode: BILLING_MODE,
       activePlanName: PRO_PLAN_NAME,
     });
@@ -937,6 +1056,34 @@ app.use(
 app.listen(PORT, () =>
   console.log(`Server running on http://localhost:${PORT}`)
 );
+
+const CREATE_APP_SUBSCRIPTION = `
+mutation AppSubscriptionCreate(
+  $name: String!
+  $lineItems: [AppSubscriptionLineItemInput!]!
+  $returnUrl: URL!
+  $test: Boolean
+) {
+  appSubscriptionCreate(
+    name: $name
+    lineItems: $lineItems
+    returnUrl: $returnUrl
+    test: $test
+  ) {
+    userErrors {
+      field
+      message
+    }
+    appSubscription {
+      id
+      name
+      status
+      test
+    }
+    confirmationUrl
+  }
+}
+`;
 
 const GET_ACTIVE_SUBSCRIPTIONS = `
 query GetActiveSubscriptions {
