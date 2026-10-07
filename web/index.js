@@ -492,12 +492,20 @@ function isEmbeddedRequest(req) {
 }
 
 const BillingManager = {
+  /**
+   * Entitlement as the rest of the app should see it.
+   *
+   * When the plan gate is switched off, report an entitled plan everywhere instead of only
+   * skipping the server-side middleware. The frontend gates independently of requireActivePlan
+   * (pages/index.jsx redirects to /billing-required on hasActiveSubscription === false, which
+   * then sends the merchant to the hosted plan page), so reporting "false" here would still
+   * bounce merchants out of the app even with the gate disabled.
+   *
+   * This is an ACCESS decision, not a billing fact. Anything that decides whether to charge must
+   * use getRealSubscriptionStatus instead, or with the gate off it would treat every merchant as
+   * already paying and refuse to sell them anything.
+   */
   async getSubscriptionStatus(session) {
-    // When the plan gate is switched off, report an entitled plan everywhere instead of only
-    // skipping the server-side middleware. The frontend gates independently of requireActivePlan
-    // (pages/index.jsx redirects to /billing-required on hasActiveSubscription === false, which
-    // then sends the merchant to the hosted plan page), so reporting "false" here would still
-    // bounce merchants out of the app even with the gate disabled.
     if (!SHOPIFY_REQUIRE_ACTIVE_PLAN) {
       return {
         tier: "premium",
@@ -506,6 +514,13 @@ const BillingManager = {
       };
     }
 
+    return this.getRealSubscriptionStatus(session);
+  },
+
+  /**
+   * What Shopify actually says about this shop's subscription, ignoring the gate.
+   */
+  async getRealSubscriptionStatus(session) {
     const client = createGraphQLClient(session);
     const response = await client.request(GET_ACTIVE_SUBSCRIPTIONS);
     const subscriptions =
@@ -788,7 +803,7 @@ app.get("/billing/start", async (req, res) => {
     // refresh. Creating a charge unconditionally would prompt an already-paying merchant to pay a
     // second time, so an active subscription goes to Shopify's hosted plan page (upgrade,
     // downgrade, cancel) and never through appSubscriptionCreate.
-    const existing = await BillingManager.getSubscriptionStatus(session);
+    const existing = await BillingManager.getRealSubscriptionStatus(session);
     const redirectUri = existing.hasActiveSubscription
       ? getManagedPricingUrl(req, session.shop)
       : await resolveCheckoutUrl(req, session, getRequestedInterval(req));
@@ -833,7 +848,8 @@ app.get("/api/createSubscription", async (req, res) => {
       return sendReauthorize(res, getShopFromSessionOrRequest(req, res));
     }
 
-    const subscription = await BillingManager.getSubscriptionStatus(session);
+    // Billing decision, so read Shopify rather than the gate-aware view.
+    const subscription = await BillingManager.getRealSubscriptionStatus(session);
     if (subscription.hasActiveSubscription) {
       return res.status(HTTP_STATUS.OK).send({
         isActiveSubscription: true,
